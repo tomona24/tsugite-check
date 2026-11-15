@@ -186,6 +186,7 @@ details.panel:not([open]){gap:0}
 .orient[disabled]{opacity:.4}
 .prevend{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
 .prevend .pipe-svg{max-width:200px;opacity:.7}
+.prevend img.prev-sk{max-height:56px;width:auto;background:#fff;border-radius:6px}
 .verdict{display:grid;gap:4px;padding:14px;border-radius:var(--r);background:var(--sunk);border:1px solid var(--line)}
 .verdict b{font-size:17px} .verdict span{font-size:13px;color:var(--muted)}
 .verdict.v-ok{background:var(--ok-soft);border-color:var(--ok)} .verdict.v-ng{background:var(--ng-soft);border-color:var(--ng)}
@@ -1272,12 +1273,21 @@ window.JC_SYMBOLS = [{"id": "u:11°", "name": "11°", "form": "GX", "left": "挿
 'use strict';
 const LIB = root.JC_SYMBOLS || [];
 // フランジ端（F）の記号は端の種類を補う（記号の図から確認）
-const F_ENDS = { 'g:GXフランジ短管（F×受）': ['F', '受'], 'g:GXフランジ短管（F×挿）': ['F', '挿'], 'g:K形短管1号（受×F）': ['受', 'F'], 'u:K形短管２号': ['F', '挿'], 'u:フランジ短管': ['F', 'F'], 'g:フランジ付き仕切弁': ['F', 'F'] };
+// 割丁字管（u:割丁字）は右端の縦線がフランジ（左の［ ］は既設管を囲む本体で、継手の端ではない）
+const F_ENDS = { 'g:GXフランジ短管（F×受）': ['F', '受'], 'g:GXフランジ短管（F×挿）': ['F', '挿'], 'g:K形短管1号（受×F）': ['受', 'F'], 'u:K形短管２号': ['F', '挿'], 'u:フランジ短管': ['F', 'F'], 'g:フランジ付き仕切弁': ['F', 'F'], 'u:割丁字': ['', 'F'] };
 LIB.forEach(s => { const e = F_ENDS[s.id]; if (e) { s.left = e[0]; s.right = e[1]; } });
 const byId = Object.fromEntries(LIB.map(s => [s.id, s]));
 const famOf = form => form === 'K' ? 'K' : 'GX';
 const has = id => !!byId[id];
 const pick = (...ids) => ids.find(has) || null;
+// 割丁字管か: 記号に u:割丁字 を選んだ管、または記号を選んでいない管で管の種類が「割」と「T／丁字」を含むもの
+const WARI = 'u:割丁字';
+const wariLabel = l => /割/.test(l || '') && /T|丁字/.test(l || '');
+function isWari(p) {
+  const s = p && p.sketch;
+  if (s && s.t === 'lib' && has(s.id)) return s.id === WARI;
+  return !!p && p.kind === 'fitting' && wariLabel(p.label);
+}
 
 function angleOf(label) {
   const m = /(90|45|22|11|5)\s*(?:1\/2|1\/4|5\/8)?\s*°?/.exec(label || '');
@@ -1287,6 +1297,7 @@ function angleOf(label) {
 function autoId(p, form) {
   const f = famOf(form || p._form), l = p.label || '', both = p.back === '受' && p.front === '受', bothS = p.back === '挿' && p.front === '挿';
   if (p.kind === 'tsugiwa') return f === 'K' ? 'u:K形継輪' : 'u:GX継輪';
+  if (p.kind === 'fitting' && wariLabel(l)) return WARI;                 // 割丁字管（先端はフランジ。フランジ端の判定より先に見る）
   if (!p.branchStart && (p.back === 'F' || p.front === 'F')) {          // フランジ端のある管
     const o = p.back === 'F' ? p.front : p.back;
     if (o === 'F') return /弁|SSV/.test(l) ? 'g:フランジ付き仕切弁' : 'u:フランジ短管';
@@ -1301,7 +1312,6 @@ function autoId(p, form) {
   if (p.kind === 'straight') return f === 'K' ? 'g:K形直管' : (p._liner ? 'u:GX直管ライナー付き' : 'u:GX直管');
   if (/消火栓/.test(l)) return 'u:消火栓';
   if (/洗浄栓/.test(l)) return 'u:洗浄栓';
-  if (/割/.test(l) && /T|丁字/.test(l)) return 'u:割丁字';
   if (/曲/.test(l)) {
     const a = angleOf(l) || '45';
     if (f === 'K') return both ? pick(`g:K形両受${a}°`, 'g:K形両受11°') : pick(a === '90' ? 'u:K形90°' : `g:K形${a}°`, 'g:K形45°');
@@ -1323,6 +1333,7 @@ function autoId(p, form) {
 function perpCut(p) {
   if (p.tobu === 'L') return { id: 'u:⊥管突ありGなし', flip: false };   // 突部は起点側
   if (p.tobu === 'R') return { id: 'u:⊥管突ありGなし', flip: true };    // 突部は布設方向側
+  if (p.tobu === 'N') return { id: 'g:⊥管両ボウズ', flip: false };      // 突部なし（棒線だけ）
   const t = e => e === 'glink' ? 'G' : e === 'ring' ? 'R' : 'N';
   const L = t(p._endL), R = t(p._endR);
   const T = { GG: ['u:⊥管両G', false], RG: ['u:⊥切突あり', false], GR: ['u:⊥切突あり', true], NG: ['u:⊥切ボウズ', false], GN: ['u:⊥切ボウズ', true],
@@ -1332,8 +1343,9 @@ function perpCut(p) {
 function specOf(p, form) {
   const s = p.sketch;
   if (s && s.t === 'img') return s;
-  if (s && s.t === 'lib' && has(s.id)) return s;
+  if (s && s.t === 'lib' && has(s.id)) return s.id === WARI ? { t: 'lib', id: WARI, flip: false } : s;   // 割丁字管はフランジを常に右（反転しない）
   const id = autoId(p, form);
+  if (id === WARI) return { t: 'lib', id, flip: false };
   if (p.branchStart) return { t: 'lib', id, flip: false };   // 取り出し側の起点（丁字管）はそのままの向き
   if (p.kind === 'cut' && famOf(form || p._form) !== 'K' && ((p.cutType || 'U') === '⊥' || (p.back === '挿' && p.front === '挿'))) return { t: 'lib', id, flip: perpCut(p).flip };
   return { t: 'lib', id };
@@ -1346,7 +1358,7 @@ function endsOf(p, form) {
   const m = byId[s.id]; if (!m) return [null, null];
   let L = m.left || null, R = m.right || null;
   if (s.flip !== undefined ? s.flip : needFlip(m, p.back, p.front)) [L, R] = [R, L];
-  if (p.skT && p.skT.h) [L, R] = [R, L];
+  if (p.skT && p.skT.h && s.id !== WARI) [L, R] = [R, L];
   return [L, R];
 }
 // 画像の左右の端（受/挿）と管の向きを比べ、合わない時だけ左右反転
@@ -1377,8 +1389,9 @@ async function render(p, customs, form) {
   const g = cv.getContext('2d');
   g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-  const rot = !!(p.skT && p.skT.r);   // 取り出し側の起点（丁字管）: 本管を上下、取り出し口を右に
-  const fh = (s.flip !== undefined ? s.flip : needFlip(meta, p.back, p.front)) !== !!(p.skT && p.skT.h && !rot), fv = !!(p.skT && p.skT.v && !rot);
+  const T = s.id === WARI ? null : p.skT;   // 割丁字管は保存済みの反転（古いデータ）も使わない（フランジを常に右）
+  const rot = !!(T && T.r);   // 取り出し側の起点（丁字管）: 本管を上下、取り出し口を右に
+  const fh = (s.flip !== undefined ? s.flip : needFlip(meta, p.back, p.front)) !== !!(T && T.h && !rot), fv = !!(T && T.v && !rot);
   if (fh || fv) { g.translate(fh ? cv.width : 0, fv ? cv.height : 0); g.scale(fh ? -1 : 1, fv ? -1 : 1); }   // 左右・上下の反転
   g.drawImage(im, pad, pad, w, h);
   if (rot) cv = rotateTee(cv, !!p.skT.v);
@@ -1465,12 +1478,12 @@ function importFile(file) {
     r.onerror = rej; r.readAsDataURL(file);
   });
 }
-root.JCSketch = { LIB, byId, famOf, autoId, specOf, keyOf, endsOf, render, dataUrlBytes, importFile };
+root.JCSketch = { LIB, byId, famOf, autoId, specOf, keyOf, endsOf, isWari, render, dataUrlBytes, importFile };
 })(window);
 
 </script>
 <script>
-window.JC_VERSION = '20261028-619f048f';
+window.JC_VERSION = '20261115-7dfdbc01';
 </script>
 <script>
 /* ===== 継手チェック: 画面 ===== */
@@ -1912,8 +1925,9 @@ function kojiChips(target, cur) {
 }
 function runName(r, k) { return (r.branch ? '取り出し：' : '') + (r.zumen || `チェックシート${k + 1}`); }
 // 丁字管の取り出し（分岐）：フランジ付きはフランジ、二受などは受口
+//   割丁字管は取り出し口（フランジ）の先を同じチェックシートで続けるので、取り出し側のシートは作らない
 function teeBranchEnd(x) {
-  if (!x || x.kind !== 'fitting' || !/T字|丁字|T管/.test(x.label || '')) return null;
+  if (!x || x.kind !== 'fitting' || !/T字|丁字|T管/.test(x.label || '') || SK.isWari(x)) return null;
   return /F付|フランジ/.test(x.label) ? 'F' : '受';
 }
 const branchRunOf = (x) => S.sections.find(r => r.branch && r.branch.pipeId === x.id);
@@ -1981,7 +1995,7 @@ function vProject() {
         <span class="pill ${st.cls}">${esc(st.txt)}</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button></li>`;
     }
     rows += `<li class="pipe"><div class="pipe-h"><span class="pipe-no">管 ${esc(x.no)}</span><span class="pipe-l">${esc(E.pipeLabel(x) || KINDS[x.kind])}</span>
-      ${i === s.pipes.length - 1 ? `<button class="link" data-act="askDelPipe">削除</button>` : ''}</div>${x.kind === 'cut' ? `<div class="pipe-len"><label class="numf"><span>切管の長さ</span><input id="pl-${i}" type="text" inputmode="decimal" data-pcut="${i}" value="${esc(x.cutLen || '')}" autocomplete="off" placeholder="2.35"><em>m</em></label><small class="warn-t" ${x.cutLen ? 'hidden' : ''}>長さが未入力です</small></div>` : ''}<div class="pipe-sk">${skImg(sketchCtx(s, i), x.skT && x.skT.r ? 'tall' : '')}<span>${x.branchStart ? `取り出し（${END[x.front]}）から` : `${END[x.back]} → ${END[x.front]}`}</span></div>${branchRow(s, x)}</li>`;
+      ${i === s.pipes.length - 1 ? `<button class="link" data-act="askDelPipe">削除</button>` : ''}</div>${x.kind === 'cut' ? `<div class="pipe-len"><label class="numf"><span>切管の長さ</span><input id="pl-${i}" type="text" inputmode="decimal" data-pcut="${i}" value="${esc(x.cutLen || '')}" autocomplete="off" placeholder="2.35"><em>m</em></label><small class="warn-t" ${x.cutLen ? 'hidden' : ''}>長さが未入力です</small></div>` : ''}<div class="pipe-sk">${skImg(sketchCtx(s, i), x.skT && x.skT.r ? 'tall' : '')}<span>${x.branchStart ? `取り出し（${END[x.front]}）から` : SK.isWari(x) ? `既設管 → ${END[x.front]}` : `${END[x.back]} → ${END[x.front]}`}</span></div>${branchRow(s, x)}</li>`;
   });
   if (ui.infoOpen == null) { ui.infoOpen = !p.name; saveUI(); }   // 既定（名前が空なら開く）は一度だけ決める
   const infoOpen = infoOpenRendered = ui.infoOpen;
@@ -2033,7 +2047,7 @@ function vWizard() {
   const head = `<ol class="steps">${steps.map((t, i) => `<li class="${i === w.step ? 'on' : i < w.step ? 'done' : ''}">${i + 1}. ${t}</li>`).join('')}</ol>`;
   let body = '', canNext = true;
   if (w.step === 0) {
-    canNext = !!w.kind && (w.kind !== 'cut' || !!w.cutLen);
+    canNext = !!w.kind && (w.kind !== 'cut' || !!w.cutLen) && !(prev && wariW(w));   // 割丁字管は起点の管だけ
     body = `<h2 class="q">据える管の種類は？</h2>
       <div class="grid4">${Object.entries(KINDS).map(([k, t]) => `<button class="choice ${w.kind === k ? 'on' : ''}" data-act="wKind" data-v="${k}">${pipeSVG(k === 'tsugiwa' ? '受' : '挿', '受', { w: 120, h: 34, label: false, kind: k })}<b>${t}</b></button>`).join('')}</div>
       ${w.kind === 'cut' ? `<div class="f"><span>切管の種類</span><div class="seg">${['U', '⊥'].map(t => `<button class="${(w.cutType || 'U') === t ? 'on' : ''}" data-act="wCut" data-v="${t}">${t}切管</button>`).join('')}</div></div>
@@ -2041,25 +2055,27 @@ function vWizard() {
         <p class="hint">様式の「管の種類」欄には <b id="w-cutprev">${esc(cutLabel(w))}</b> と記入します。</p>`
       : `<label class="f"><span>管の種類（様式の「管の種類」欄）</span><input id="w-label" data-bind="w.label" value="${esc(w.label)}" placeholder="${w.kind === 'straight' ? '①' : '例: 45°曲管'}"></label>
         ${w.kind === 'fitting' ? typePicker(w) : PRESETS[w.kind].length ? `<div class="chips">${PRESETS[w.kind].map(t => `<button class="chipb" data-act="wPreset" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
+        ${prev && wariW(w) ? `<p class="warn" id="w-wari">割丁字管は起点の管（1本目）として登録してください。2本目以降には登録できません。</p>` : ''}
         <p class="hint">略図は、管の種類と次に選ぶ受口・挿し口の向きから自動で入ります。</p>`}
       ${prev ? '' : `<div class="f"><span>この管の配管日</span><div class="seg">${[[false, '本日配管'], [true, '前日までに配管済み']].map(([v, t]) => `<button class="${!!w.prevMode === v ? 'on' : ''}" data-act="wPrevMode" data-v="${v ? 1 : 0}">${t}</button>`).join('')}</div>
         ${w.prevMode ? `<label class="f"><span>配管した日</span><input id="w-prevday" type="date" data-bind="w.prevDay" value="${esc(w.prevDay)}"></label><small>管の種類欄に「（${esc(E.prevDayText(w.prevDay))}配管）」と記入し、略図の直線部分を破線にします。</small>` : ''}</div>`}
-      <label class="f f-s"><span>管 No.</span><input id="w-no" data-bind="w.no" value="${esc(w.no)}" inputmode="numeric"></label><small class="warn-t" id="w-no-dup" ${dupNo(s.projectId, w.no) ? '' : 'hidden'}>この管No.は同じ工事で既に使われています</small>
+      <label class="f f-s"><span>管 No.</span><input id="w-no" data-bind="w.no" value="${esc(w.no)}" autocomplete="off"></label><small class="warn-t" id="w-no-dup" ${dupNo(s.projectId, w.no) ? '' : 'hidden'}>この管No.は同じ工事で既に使われています</small>
       ${w.kind === 'tsugiwa' ? `<div class="f"><span>継ぎ輪の配管方法</span><div class="seg">${[['seq', '一方から順次配管（L′）'], ['seme', 'せめ配管（y1）']].map(([v, t]) => `<button class="${(w.tmode || 'seq') === v ? 'on' : ''}" data-act="wSet" data-k="tmode" data-v="${v}">${t}</button>`).join('')}</div></div>` : ''}`;
   } else if (w.step === 1) {
     const need = prev ? mate(prev.front) : null;
-    canNext = !!(w.back && w.front) && (!need || w.back === need) && orientOpts(w).some(o => o[0] === w.back && o[1] === w.front) && (w.kind !== 'fitting' || !!w.skOk);
+    const wari = wariW(w);   // 割丁字管: 向きは「→ フランジ」に固定。略図は反転させないので選ばせない
+    canNext = !!(w.back && w.front) && (!need || w.back === need) && orientOpts(w).some(o => o[0] === w.back && o[1] === w.front) && (w.kind !== 'fitting' || wari || !!w.skOk);
     if (needTobu(w, prev) && !w.tobuOk) canNext = false;   // ⊥切管は突部の位置を選ぶ（K形は略図が同じなので選ばない。起点の管は必ず選ぶ）
     body = `<h2 class="q">受口・挿し口の向きは？</h2>
       <p class="hint">左が起点側（前の管）、右が布設方向です。${prev ? `前の管（管 ${esc(prev.no)}）の先端は<b>${END[prev.front]}</b>なので、この管の手前側は${END[need]}になります。` : ''}</p>
-      ${prev ? `<div class="prevend">${pipeSVG(prev.back, prev.front, { w: 240, h: 52, kind: prev.kind })}<span>前の管 ${esc(prev.no)}</span></div>` : ''}
-      <div class="orients">${orientOpts(w).map(o => {
+      ${prev ? `<div class="prevend">${SK.isWari(prev) ? skImg(sketchCtx(s, s.pipes.length - 1), 'prev-sk') : pipeSVG(prev.back, prev.front, { w: 240, h: 52, kind: prev.kind })}<span>前の管 ${esc(prev.no)}</span></div>` : ''}
+      ${wari ? `<p class="hint" id="w-wari-dir">割丁字管は、取り出し口（フランジ）を布設方向（右）に向けて登録します。次の管はフランジで接合します。</p>` : `<div class="orients">${orientOpts(w).map(o => {
         const okk = !need || o[0] === need;
         return `<button class="orient ${w.back === o[0] && w.front === o[1] ? 'on' : ''}" data-act="wOrient" data-v="${o.join('')}" ${okk ? '' : 'disabled'}>${pipeSVG(o[0], o[1], { kind: w.kind })}<span>${END[o[0]]} → ${END[o[1]]}${okk ? '' : '（前の管とつながりません）'}</span></button>`;
-      }).join('')}</div>
+      }).join('')}</div>`}
       ${w.back && w.front && needTobu(w, prev) && orientOpts(w).some(o => o[0] === w.back && o[1] === w.front) ? tobuPicker(w, prev, '次へ進めます') : ''}
-      ${w.back && w.front && w.kind === 'fitting' ? `<div class="f"><span>略図の向き（上下・左右）を確認して選んでください</span><div class="skgrid skvar">${skVariants(w).map(x => `<button class="skb ${w.skOk && !!(w.skT && w.skT.v) === x.v && !!(w.skT && w.skT.h) === x.h ? 'on' : ''}" data-act="wSkT" data-v="${x.v ? 1 : 0}${x.h ? 1 : 0}">${skImg(x.p)}<span>${x.t}</span></button>`).join('')}</div>${skVariants(w).length < 4 ? '<small>左右の向きは管口（受口・挿し口・フランジ）の向きで決まります。</small>' : ''}${w.skOk ? '' : '<small class="warn-t">略図の向きを選ぶと次へ進めます。</small>'}</div>` : ''}
-      ${w.back && w.front && w.kind !== 'fitting' && !needTobu(w, prev) ? `<div class="f"><span>略図（この向きでExcelに入ります）</span><div class="sk-prev">${skImg({ kind: w.kind, label: w.kind === 'cut' ? cutLabel(w) : w.label, cutType: w.cutType, back: w.back, front: w.front, sketch: w.sketch, _form: w.form, prevDay: !prev && w.prevMode ? w.prevDay : null })}</div></div>` : ''}
+      ${w.back && w.front && w.kind === 'fitting' && !wari ? `<div class="f"><span>略図の向き（上下・左右）を確認して選んでください</span><div class="skgrid skvar">${skVariants(w).map(x => `<button class="skb ${w.skOk && !!(w.skT && w.skT.v) === x.v && !!(w.skT && w.skT.h) === x.h ? 'on' : ''}" data-act="wSkT" data-v="${x.v ? 1 : 0}${x.h ? 1 : 0}">${skImg(x.p)}<span>${x.t}</span></button>`).join('')}</div>${skVariants(w).length < 4 ? '<small>左右の向きは管口（受口・挿し口・フランジ）の向きで決まります。</small>' : ''}${w.skOk ? '' : '<small class="warn-t">略図の向きを選ぶと次へ進めます。</small>'}</div>` : ''}
+      ${w.back && w.front && (w.kind !== 'fitting' || wari) && !needTobu(w, prev) ? `<div class="f"><span>略図（この向きでExcelに入ります）</span><div class="sk-prev">${skImg({ kind: w.kind, label: w.kind === 'cut' ? cutLabel(w) : w.label, cutType: w.cutType, back: w.back, front: w.front, sketch: w.sketch, _form: w.form, prevDay: !prev && w.prevMode ? w.prevDay : null })}</div></div>` : ''}
       ${prev && !orientOpts(w).some(o => o[0] === need) ? `<p class="warn">この管は前の管の${END[prev.front]}に接合できません（受口と挿し口、フランジとフランジが隣り合うようにつなぎます）。${prev.front === '挿' ? '挿し口同士は継ぎ輪でつなぎます。' : prev.front === '受' ? '受口同士はつなげません。' : '前の管の先がフランジなので、フランジのある管を選んでください。'}</p>${canFlipPrev(s) ? `<button class="btn" data-act="flipPrev">管 ${esc(prev.no)} の向きを反転する</button>` : ''}` : ''}`;
   } else {
     // フランジ同士の継手はフランジ継手の様式、受口・挿し口の継手はそれ以外の様式
@@ -2081,7 +2097,7 @@ function vWizard() {
       ${cutOpts.length > 1 ? `<div class="f"><span>切管挿し口の処理</span><div class="seg">${cutOpts.map(k => `<button class="${w.cutEnd === k ? 'on' : ''}" data-act="wSet" data-k="cutEnd" data-v="${k}">${LINK[k]}</button>`).join('')}</div></div>` : ''}
       ${endProt ? `<div class="f"><span>切管端部の防食</span><div class="seg">${[['', 'なし／別記録'], ['cap', '管端防食キャップ'], ['gomu', '防食ゴム（防食材料）']].map(([k, t]) => `<button class="${(w.endProt || '') === k ? 'on' : ''}" data-act="wSet" data-k="endProt" data-v="${k}">${t}</button>`).join('')}</div>
         <small>選ぶと、その様式のチェック項目が継手チェックの後に続きます。</small></div>` : ''}
-      <label class="f f-s"><span>継手 No.</span><input id="w-jno" data-bind="w.jno" value="${esc(w.jno)}" inputmode="numeric"></label>
+      <label class="f f-s"><span>継手 No.</span><input id="w-jno" data-bind="w.jno" value="${esc(w.jno)}" autocapitalize="characters" autocomplete="off"></label>
       <div class="f"><span>この管の略図</span><div class="sk-prev">${skImg({ kind: w.kind, label: w.kind === 'cut' ? cutLabel(w) : w.label, cutType: w.cutType, back: w.back, front: w.front, sketch: w.sketch, _form: w.form, skT: w.skT, tobu: w.tobu,
         _liner: inf.sock !== prev && w.liner === true, _endL: w.back === '挿' ? w.cutEnd : undefined })}</div></div>
       <div class="verdict"><span class="eyebrow">記録する様式</span><b>${esc(E.SHEETS[inf.sheetKey].label)}${inf.extraKey ? '＋' + esc(E.SHEETS[inf.extraKey].label) : ''}</b>
@@ -2104,15 +2120,27 @@ function newWizard(s) {
   const prev = s.pipes[s.pipes.length - 1];
   const inc = no => { const m = /^(.*?)(\d+)$/.exec(toHalf(no)); return m ? m[1] + (+m[2] + 1) : ''; };
   const n = prev && prev.branchStart && s.branch && s.branch.firstNo ? s.branch.firstNo : (prev && inc(prev.no)) || String(s.pipes.length + 1);
-  const jn = s.pipes.filter((x, i) => i && x.joint).length + 1;
+  // 継手No.: このチェックシートの前の継手No.が英字で終わるなら次の英字（A → B）、それ以外は継手の数＋1
+  const prevJ = s.pipes.slice(1).reverse().find(x => x.joint);
+  const jn = nextAlpha(prevJ && prevJ.joint.no) || String(s.pipes.filter((x, i) => i && x.joint).length + 1);
   const all = runsOf(s.projectId).flatMap(r => r.pipes);
   const last = prev || all[all.length - 1];
   const lastJ = all.slice().reverse().find(x => x.joint);
-  const w = { step: 0, kind: 'straight', label: '①', no: n, form: lastJ ? lastJ.joint.form : 'GX', flType: lastJ ? lastJ.joint.flType || 'P' : 'P', cutEnd: null, liner: null, endProt: '', cutType: 'U', cutLen: '', jno: String(jn), tmode: 'seq', prevMode: false, prevDay: '' };
+  const w = { step: 0, kind: 'straight', label: '①', no: n, form: lastJ ? lastJ.joint.form : 'GX', flType: lastJ ? lastJ.joint.flType || 'P' : 'P', cutEnd: null, liner: null, endProt: '', cutType: 'U', cutLen: '', jno: jn, tmode: 'seq', prevMode: false, prevDay: '' };
   if (!prev) { const pl = prevRunLast(s); w.prevDay = (pl && pl.run.date && pl.run.date !== s.date) ? pl.run.date : yesterday(); }
   autoOrient(w, prev);
   return w;
 }
+// 英字で終わる番号の次（A → B、Z → AA、1A → 1B。小文字は小文字のまま）。英字で終わらなければ null
+function nextAlpha(no) {
+  const m = /^(.*?)([A-Za-z]+)$/.exec(toHalf(no)); if (!m) return null;
+  const lower = m[2] === m[2].toLowerCase();
+  let n = 0; for (const c of m[2].toUpperCase()) n = n * 26 + (c.charCodeAt(0) - 64);
+  n++; let t = ''; while (n > 0) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = Math.floor((n - 1) / 26); }
+  return m[1] + (lower ? t.toLowerCase() : t);
+}
+// 登録中の管が割丁字管か（略図の記号または管の種類から判定）
+function wariW(w) { return w.kind === 'fitting' && SK.isWari({ kind: w.kind, label: w.label, sketch: w.sketch }); }
 // 管の両端（受/挿）は管そのもので決まる。略図記号の両端と食い違う向きは候補から外す
 //   例: 仕切弁＝受受、45°曲管＝挿受（受挿）、U切管＝挿受（受挿）、⊥切管＝挿挿
 // 異形管の略図：上下反転・左右反転の候補（左右反転は両端が同じ種類の記号だけ。違う場合は管口の向きで決まる）
@@ -2121,13 +2149,14 @@ function newWizard(s) {
 //   K形の⊥切管は略図が g:K形両挿短管 で左右どちらでも同じなので選ばせない
 function needTobu(w, prev) { return w.kind === 'cut' && (w.cutType || 'U') === '⊥' && (!prev || SK.famOf(w.form) !== 'K'); }
 function tobuPicker(w, prev, then) {
-  return `<div class="f"><span>⊥切管の突部の位置を確認して選んでください（突部は1本に1箇所）</span><div class="skgrid skvar">${tobuOpts(w, prev).map(x => `<button class="skb ${w.tobuOk && w.tobu === x.t ? 'on' : ''}" data-act="wTobu" data-v="${x.t}">${skImg(x.p)}<span>突部：${x.n}</span></button>`).join('')}</div>${w.tobuOk ? '' : `<small class="warn-t">突部の位置を選ぶと${then}。</small>`}<small>G-Link を使うかは、継手チェックの「挿し口突部の有無」で確認します。使う場合は、受ける管の受口に丸2点を記入します。</small></div>`;
+  return `<div class="f"><span>⊥切管の突部の位置を確認して選んでください（突部は1本に1箇所、または無し）</span><div class="skgrid skvar">${tobuOpts(w, prev).map(x => `<button class="skb ${w.tobuOk && w.tobu === x.t ? 'on' : ''}" data-act="wTobu" data-v="${x.t}">${skImg(x.p)}<span>突部：${x.n}</span></button>`).join('')}</div>${w.tobuOk ? '' : `<small class="warn-t">突部の位置を選ぶと${then}。</small>`}<small>G-Link を使うかは、継手チェックの「挿し口突部の有無」で確認します。使う場合は、受ける管の受口に丸2点を記入します。</small></div>`;
 }
 function tobuOpts(w, prev) {
   // 起点の管は形式が未確定。K だと2枚が同じ絵になるので GX の絵で選ばせる
   const base = { kind: 'cut', label: cutLabel(w), cutType: w.cutType, back: w.back, front: w.front, _form: prev ? w.form : 'GX' };
   return [['L', w.back, '起点側（左）'], ['R', w.front, '布設方向側（右）']].filter(o => o[1] === '挿')
-    .map(([t, , n]) => ({ t, n, p: Object.assign({}, base, { tobu: t }) }));
+    .map(([t, , n]) => ({ t, n, p: Object.assign({}, base, { tobu: t }) }))
+    .concat([{ t: 'N', n: 'なし', p: Object.assign({}, base, { tobu: 'N' }) }]);   // 突部のない棒線
 }
 function skVariants(w) {
   const base = { kind: w.kind, label: w.label, back: w.back, front: w.front, sketch: w.sketch, _form: w.form };
@@ -2137,6 +2166,7 @@ function skVariants(w) {
   return vs.map(([v, h, t]) => ({ v, h, t, p: Object.assign({}, base, { skT: { v, h } }) }));
 }
 function orientOpts(w) {
+  if (wariW(w)) return [['F', 'F']];   // 割丁字管: 先端（右）は取り出し口のフランジ。手前は既設管（継手なし）で、起点の管だけなので F としておく
   let opts = ORIENTS.filter(o => ORIENT_OK[w.kind].includes(o.join('')));
   if (w.kind === 'cut') opts = opts.filter(o => (w.cutType || 'U') === '⊥' ? o.join('') === '挿挿' : o[0] !== o[1]);
   const fits = opts.filter(o => {
@@ -2160,7 +2190,7 @@ function commitWizard() {
   const pipe = { id: uid(), no: toHalf(w.no), kind: w.kind, label, back: w.back, front: w.front, joint: null };
   if (w.kind === 'cut') { pipe.cutType = w.cutType || 'U'; pipe.cutLen = w.cutLen; if (w.tobu && needTobu(w, prev)) pipe.tobu = w.tobu; }   // K形の⊥切管は tobu を保存しない
   if (w.sketch) pipe.sketch = w.sketch;
-  if (w.kind === 'fitting' && w.skT && (w.skT.v || w.skT.h)) pipe.skT = { v: !!w.skT.v, h: !!w.skT.h };
+  if (w.kind === 'fitting' && !wariW(w) && w.skT && (w.skT.v || w.skT.h)) pipe.skT = { v: !!w.skT.v, h: !!w.skT.h };
   if (!prev && w.prevMode && w.prevDay) pipe.prevDay = w.prevDay;
   if (w.kind === 'tsugiwa') pipe.tmode = w.tmode || 'seq';
   if (prev) {
@@ -2792,7 +2822,10 @@ document.addEventListener('click', e => {
     wOrient() { ui.wiz.back = d.v[0]; ui.wiz.front = d.v[1]; ui.wiz.tobuOk = false; ui.wiz.tobu = null; ui.wiz.skOk = false; ui.wiz.skT = null; saveUI(); render(); },
     wTobu() { ui.wiz.tobu = d.v; ui.wiz.tobuOk = true; saveUI(); render(); },
     wSkT() { ui.wiz.skT = { v: d.v[0] === '1', h: d.v[1] === '1' }; ui.wiz.skOk = true; saveUI(); render(); },
-    wNext() { ui.wiz.step++; if (ui.wiz.step === 1) autoOrient(ui.wiz, sec(ui.sid).pipes.slice(-1)[0]); go({}, 'push'); },
+    wNext() {
+      // 管の種類を手で入力したときは画面を描き直さないので、ここでも割丁字管（起点の管だけ）を確かめる
+      if (ui.wiz.step === 0 && sec(ui.sid).pipes.length && wariW(ui.wiz)) { toast('割丁字管は起点の管（1本目）として登録してください'); render(); return; }
+      ui.wiz.step++; if (ui.wiz.step === 1) autoOrient(ui.wiz, sec(ui.sid).pipes.slice(-1)[0]); go({}, 'push'); },
     wBack() { go({ wiz: Object.assign({}, ui.wiz, { step: ui.wiz.step - 1 }) }); },   // 前の手順へ（入力は残す）
     wSave() { const i = commitWizard(); go({ view: 'project', wiz: null }); toast(`管 ${sec(ui.sid).pipes[i].no} を登録しました`); },
     wSaveCheck() { const i = commitWizard(); go({ view: 'check', wiz: null, chk: { i, step: 0, list: false } }, 'replace'); },   // 登録の履歴をチェックに置き換える
