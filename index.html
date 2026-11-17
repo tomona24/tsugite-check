@@ -1281,8 +1281,9 @@ const famOf = form => form === 'K' ? 'K' : 'GX';
 const has = id => !!byId[id];
 const pick = (...ids) => ids.find(has) || null;
 // 割丁字管か: 記号に u:割丁字 を選んだ管、または記号を選んでいない管で管の種類が「割」と「T／丁字」を含むもの
+//   管の種類は手入力もあるので、全角の「Ｔ」も NFKC で半角に直してから見る（小文字の t も同じに扱う）
 const WARI = 'u:割丁字';
-const wariLabel = l => /割/.test(l || '') && /T|丁字/.test(l || '');
+const wariLabel = l => { const t = String(l || '').normalize('NFKC'); return /割/.test(t) && /[Tt]|丁字/.test(t); };
 function isWari(p) {
   const s = p && p.sketch;
   if (s && s.t === 'lib' && has(s.id)) return s.id === WARI;
@@ -1483,7 +1484,7 @@ root.JCSketch = { LIB, byId, famOf, autoId, specOf, keyOf, endsOf, isWari, rende
 
 </script>
 <script>
-window.JC_VERSION = '20261115-7dfdbc01';
+window.JC_VERSION = '20261117-0a069e97';
 </script>
 <script>
 /* ===== 継手チェック: 画面 ===== */
@@ -2043,11 +2044,13 @@ function wizInfo(s, w, prev) {
 function vWizard() {
   const s = sec(ui.sid), p = proj(s.projectId), w = ui.wiz;
   const prev = s.pipes[s.pipes.length - 1] || null;
+  // 割丁字管は起点の管だけ（戻る・進むで管の種類の手順を飛ばしたときも、向き・継手の手順で止める）
+  const wariNG = !!prev && wariW(w), wariMsg = wariNG ? `<p class="warn" id="w-wari">割丁字管は起点の管（1本目）として登録してください。2本目以降には登録できません。</p>` : '';
   const steps = prev ? ['管種', '向き', '継手'] : ['管種', '向き'];
   const head = `<ol class="steps">${steps.map((t, i) => `<li class="${i === w.step ? 'on' : i < w.step ? 'done' : ''}">${i + 1}. ${t}</li>`).join('')}</ol>`;
   let body = '', canNext = true;
   if (w.step === 0) {
-    canNext = !!w.kind && (w.kind !== 'cut' || !!w.cutLen) && !(prev && wariW(w));   // 割丁字管は起点の管だけ
+    canNext = !!w.kind && (w.kind !== 'cut' || !!w.cutLen) && !wariNG;   // 割丁字管は起点の管だけ
     body = `<h2 class="q">据える管の種類は？</h2>
       <div class="grid4">${Object.entries(KINDS).map(([k, t]) => `<button class="choice ${w.kind === k ? 'on' : ''}" data-act="wKind" data-v="${k}">${pipeSVG(k === 'tsugiwa' ? '受' : '挿', '受', { w: 120, h: 34, label: false, kind: k })}<b>${t}</b></button>`).join('')}</div>
       ${w.kind === 'cut' ? `<div class="f"><span>切管の種類</span><div class="seg">${['U', '⊥'].map(t => `<button class="${(w.cutType || 'U') === t ? 'on' : ''}" data-act="wCut" data-v="${t}">${t}切管</button>`).join('')}</div></div>
@@ -2055,7 +2058,7 @@ function vWizard() {
         <p class="hint">様式の「管の種類」欄には <b id="w-cutprev">${esc(cutLabel(w))}</b> と記入します。</p>`
       : `<label class="f"><span>管の種類（様式の「管の種類」欄）</span><input id="w-label" data-bind="w.label" value="${esc(w.label)}" placeholder="${w.kind === 'straight' ? '①' : '例: 45°曲管'}"></label>
         ${w.kind === 'fitting' ? typePicker(w) : PRESETS[w.kind].length ? `<div class="chips">${PRESETS[w.kind].map(t => `<button class="chipb" data-act="wPreset" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>` : ''}
-        ${prev && wariW(w) ? `<p class="warn" id="w-wari">割丁字管は起点の管（1本目）として登録してください。2本目以降には登録できません。</p>` : ''}
+        ${wariMsg}
         <p class="hint">略図は、管の種類と次に選ぶ受口・挿し口の向きから自動で入ります。</p>`}
       ${prev ? '' : `<div class="f"><span>この管の配管日</span><div class="seg">${[[false, '本日配管'], [true, '前日までに配管済み']].map(([v, t]) => `<button class="${!!w.prevMode === v ? 'on' : ''}" data-act="wPrevMode" data-v="${v ? 1 : 0}">${t}</button>`).join('')}</div>
         ${w.prevMode ? `<label class="f"><span>配管した日</span><input id="w-prevday" type="date" data-bind="w.prevDay" value="${esc(w.prevDay)}"></label><small>管の種類欄に「（${esc(E.prevDayText(w.prevDay))}配管）」と記入し、略図の直線部分を破線にします。</small>` : ''}</div>`}
@@ -2066,7 +2069,8 @@ function vWizard() {
     const wari = wariW(w);   // 割丁字管: 向きは「→ フランジ」に固定。略図は反転させないので選ばせない
     canNext = !!(w.back && w.front) && (!need || w.back === need) && orientOpts(w).some(o => o[0] === w.back && o[1] === w.front) && (w.kind !== 'fitting' || wari || !!w.skOk);
     if (needTobu(w, prev) && !w.tobuOk) canNext = false;   // ⊥切管は突部の位置を選ぶ（K形は略図が同じなので選ばない。起点の管は必ず選ぶ）
-    body = `<h2 class="q">受口・挿し口の向きは？</h2>
+    if (wariNG) canNext = false;
+    body = `<h2 class="q">受口・挿し口の向きは？</h2>${wariMsg}
       <p class="hint">左が起点側（前の管）、右が布設方向です。${prev ? `前の管（管 ${esc(prev.no)}）の先端は<b>${END[prev.front]}</b>なので、この管の手前側は${END[need]}になります。` : ''}</p>
       ${prev ? `<div class="prevend">${SK.isWari(prev) ? skImg(sketchCtx(s, s.pipes.length - 1), 'prev-sk') : pipeSVG(prev.back, prev.front, { w: 240, h: 52, kind: prev.kind })}<span>前の管 ${esc(prev.no)}</span></div>` : ''}
       ${wari ? `<p class="hint" id="w-wari-dir">割丁字管は、取り出し口（フランジ）を布設方向（右）に向けて登録します。次の管はフランジで接合します。</p>` : `<div class="orients">${orientOpts(w).map(o => {
@@ -2086,8 +2090,9 @@ function vWizard() {
     // 継手形式を K から K 以外に変えたら、ここで突部の位置を選ぶ（選ぶまで登録できない）
     const askTobu = needTobu(w, prev) && !!(w.back && w.front);
     if (needTobu(w, prev) && !w.tobuOk) canNext = false;
+    if (wariNG) canNext = false;
     const dnOk = DN[w.form].includes(+s.dn);
-    body = `<h2 class="q">継手の条件</h2>
+    body = `<h2 class="q">継手の条件</h2>${wariMsg}
       <div class="f"><span>継手形式</span><div class="seg">${Object.entries(FORMS).filter(([k]) => ff ? k === 'FL' : k !== 'FL').map(([k, t]) => `<button class="${w.form === k ? 'on' : ''}" data-act="wSet" data-k="form" data-v="${k}">${t}</button>`).join('')}</div></div>
       ${dnOk ? '' : `<p class="warn">${FORMS[w.form]}の様式は呼び径${esc(s.dn)}に対応していません（対応: ${DN[w.form][0]}〜${DN[w.form][DN[w.form].length - 1]}）。チェックシートの見出しの呼び径を確認してください。</p>`}
       ${w.form === 'FL' ? `<div class="f"><span>フランジの種類</span><div class="seg seg-v">${Object.entries(FLT).map(([k, t]) => `<button class="${(w.flType || 'P') === k ? 'on' : ''}" data-act="wSet" data-k="flType" data-v="${k}">${t}</button>`).join('')}</div></div>` : ''}
@@ -2135,8 +2140,11 @@ function newWizard(s) {
 function nextAlpha(no) {
   const m = /^(.*?)([A-Za-z]+)$/.exec(toHalf(no)); if (!m) return null;
   const lower = m[2] === m[2].toLowerCase();
-  let n = 0; for (const c of m[2].toUpperCase()) n = n * 26 + (c.charCodeAt(0) - 64);
-  n++; let t = ''; while (n > 0) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = Math.floor((n - 1) / 26); }
+  // 末尾の文字から繰り上げる（Z は A にして左へ。全部 Z なら先頭に A を足す）。数値にしないので、長くても狂わない
+  const a = m[2].toUpperCase().split(''); let i = a.length - 1;
+  while (i >= 0 && a[i] === 'Z') a[i--] = 'A';
+  if (i < 0) a.unshift('A'); else a[i] = String.fromCharCode(a[i].charCodeAt(0) + 1);
+  const t = a.join('');
   return m[1] + (lower ? t.toLowerCase() : t);
 }
 // 登録中の管が割丁字管か（略図の記号または管の種類から判定）
@@ -2186,6 +2194,7 @@ function autoOrient(w, prev) {
 function canFlipPrev(s) { const x = s.pipes[0]; return s.pipes.length === 1 && x.back !== x.front && ORIENT_OK[x.kind].includes(x.front + x.back); }
 function commitWizard() {
   const s = sec(ui.sid), w = ui.wiz, prev = s.pipes[s.pipes.length - 1];
+  if (prev && wariW(w)) return -1;   // 割丁字管は起点の管だけ（戻る・進むで手順を飛ばしても保存しない）
   const label = w.kind === 'cut' ? cutLabel(w) : w.label;
   const pipe = { id: uid(), no: toHalf(w.no), kind: w.kind, label, back: w.back, front: w.front, joint: null };
   if (w.kind === 'cut') { pipe.cutType = w.cutType || 'U'; pipe.cutLen = w.cutLen; if (w.tobu && needTobu(w, prev)) pipe.tobu = w.tobu; }   // K形の⊥切管は tobu を保存しない
@@ -2202,6 +2211,8 @@ function commitWizard() {
   s.pipes.push(pipe); save(s.projectId);
   return s.pipes.length - 1;
 }
+// 割丁字管を2本目以降に登録しようとしたときは保存せず、管の種類の手順に戻す
+function wariBack() { toast('割丁字管は起点の管（1本目）として登録してください'); go({ wiz: Object.assign({}, ui.wiz, { step: 0 }) }); }
 
 /* ---------- 画面: チェック ---------- */
 function chkModel() {
@@ -2827,8 +2838,8 @@ document.addEventListener('click', e => {
       if (ui.wiz.step === 0 && sec(ui.sid).pipes.length && wariW(ui.wiz)) { toast('割丁字管は起点の管（1本目）として登録してください'); render(); return; }
       ui.wiz.step++; if (ui.wiz.step === 1) autoOrient(ui.wiz, sec(ui.sid).pipes.slice(-1)[0]); go({}, 'push'); },
     wBack() { go({ wiz: Object.assign({}, ui.wiz, { step: ui.wiz.step - 1 }) }); },   // 前の手順へ（入力は残す）
-    wSave() { const i = commitWizard(); go({ view: 'project', wiz: null }); toast(`管 ${sec(ui.sid).pipes[i].no} を登録しました`); },
-    wSaveCheck() { const i = commitWizard(); go({ view: 'check', wiz: null, chk: { i, step: 0, list: false } }, 'replace'); },   // 登録の履歴をチェックに置き換える
+    wSave() { const i = commitWizard(); if (i < 0) return wariBack(); go({ view: 'project', wiz: null }); toast(`管 ${sec(ui.sid).pipes[i].no} を登録しました`); },
+    wSaveCheck() { const i = commitWizard(); if (i < 0) return wariBack(); go({ view: 'check', wiz: null, chk: { i, step: 0, list: false } }, 'replace'); },   // 登録の履歴をチェックに置き換える
     openCheck() { go({ view: 'check', chk: { i: +d.i, step: firstOpen(+d.i), list: false } }); },
     cList() { if (ui.chk.list) go({ chk: Object.assign({}, ui.chk, { list: false }) }); else { ui.chk.list = true; go({}, 'push'); } },
     cJump() { ui.chk.step = +d.k; ui.chk.list = false; go({}, 'push'); },
