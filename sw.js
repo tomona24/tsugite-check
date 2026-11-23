@@ -1,5 +1,5 @@
-/* 継手チェック service worker（版 20261117-0a069e97）: アプリ本体は先にキャッシュから返す。版が変わるとキャッシュ名も変わる */
-const CACHE = 'jc-20261117-0a069e97';
+/* 継手チェック service worker（版 20261124-5c902583）: アプリ本体は先にキャッシュから返す。版が変わるとキャッシュ名も変わる */
+const CACHE = 'jc-20261124-5c902583';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
